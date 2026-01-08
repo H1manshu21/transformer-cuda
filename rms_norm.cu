@@ -1,10 +1,37 @@
 #include <stdlib.h>
 
 __global__ void square(float *d_inputVector, float *d_squaredVector, int size) {
-    int i = blockDim.x * blockIdx.x + threadIdx.x;
+    int idx = blockDim.x * blockIdx.x + threadIdx.x;
 
-    if (i < size) {
-        d_squaredVector[i] = d_inputVector[i] * d_inputVector[i];
+    if (idx < size) {
+        d_squaredVector[idx] = d_inputVector[idx] * d_inputVector[idx];
+    }
+}
+
+__global__ void blockSum(float *d_squaredVector, float *blockSum, int size) {
+    __shared__ float shared[256];
+
+    int tid = threadIdx.x;
+    int idx = blockDim.x * blockIdx.x + threadIdx.x;
+    float val = 0.0f;
+    
+    if (idx < size) {
+        val = d_squaredVector[idx];
+    }
+
+    shared[tid] = val;
+    __syncthreads();
+
+    for (int stride = blockDim.x / 2; stride > 0; stride >>= 1) {
+        if (idx < stride) {
+            shared[tid] += shared[tid + stride];
+        }
+
+        __syncthreads();
+    }
+
+    if (tid == 0) {
+        blockSum[blockIdx.x] = shared[0]; 
     }
 }
 
@@ -37,6 +64,12 @@ int main() {
 
     // Square each element
     square<<<blocksPerGrid, threadsPerBlock>>>(d_inputVector, d_squaredVector, size);
+
+    float *blockSum;
+    cudaMalloc((void **)&blockSum, blocksPerGrid * sizeof(float));
+
+    // Store block sum
+    blockSum<<<blocksPerGrid, threadsPerBlock>>>(d_squaredVector, blockSum, size);
 
 
     cudaMemcpy(d_outputVector, h_outputVector, size * sizeof(float), cudaMemcpyDeviceToHost);
